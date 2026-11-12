@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "kakaotalk-ios-ktheme-ko": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "/ABSOLUTE/PATH/kakaotalk-ios-ktheme-mcp",
+        "ktheme-mcp"
+      ],
+      "env": {
+        "KTHEME_ALLOWED_ROOTS": "/ABSOLUTE/PATH/MY_THEMES"
+      }
+    }
+  }
+}
