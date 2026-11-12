@@ -1,0 +1,48 @@
+name: iOS build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "project.yml"
+      - "Sources/**"
+      - ".github/workflows/ios-build.yml"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build for device (unsigned)
+        run: |
+          xcodebuild build \
+            -project KTheme.xcodeproj \
+            -scheme KTheme \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package unsigned IPA
+        run: |
+          APP=build/Build/Products/Release-iphoneos/KTheme.app
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -r KTheme-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: KTheme-unsigned-ipa
+          path: KTheme-unsigned.ipa
+          if-no-files-found: error
