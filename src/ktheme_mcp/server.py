@@ -3,16 +3,15 @@ from __future__ import annotations
 
 import re
 from importlib.resources import files
-from pathlib import Path
 from typing import Any
 
 from mcp.server import MCPServer
 
 from .catalog import SOURCES
 from .engine import (
-    allowed_roots, image_references, inspect_contents, lookup_key,
-    package_project, parse_css, png_info, safe_path, scaffold,
-    troubleshoot, validate_archive, validate_project,
+    allowed_roots, archive_fingerprint, build_qa_checklist, compare_projects, list_known_keys,
+    lookup_key, package_project, read_css_block, safe_path, scaffold, troubleshoot,
+    validate_archive, validate_project, verify_reproducible_build,
 )
 
 mcp = MCPServer("KakaoTalk-iOS-KTheme-Engineering-KO")
@@ -111,6 +110,42 @@ def get_ktheme_workspace_policy() -> dict[str, Any]:
     return {"allowed_roots": [str(x) for x in allowed_roots()],
             "access": "로컬 읽기/패키징만. 지정 범위 밖 접근 거부. 네트워크 호출·디자인 생성 없음.",
             "setup": "KTHEME_ALLOWED_ROOTS 환경변수를 OS 경로구분자로 추가하세요."}
+
+
+@mcp.tool()
+def read_ktheme_css_block(theme_dir: str, selector: str) -> dict[str, Any]:
+    """테마 CSS에서 선택자 하나의 선언과 이미지 참조를 읽는다. 오타가 있으면 비슷한 선택자를 제안한다."""
+    return read_css_block(theme_dir, selector)
+
+
+@mcp.tool()
+def list_ktheme_known_keys(text: str = "") -> dict[str, Any]:
+    """검증된 CSS 키 인덱스를 검색한다(선택자·용도 문자열 포함). 빈 값이면 전체 목록."""
+    return list_known_keys(text)
+
+
+@mcp.tool()
+def compare_ktheme_projects(theme_dir_a: str, theme_dir_b: str) -> dict[str, Any]:
+    """두 테마 폴더를 비교해 추가/삭제된 선택자, 바뀐 선언, 이미지 변화를 보여준다(a → b). 파일은 변경하지 않는다."""
+    return compare_projects(theme_dir_a, theme_dir_b)
+
+
+@mcp.tool()
+def build_ktheme_qa_checklist(theme_dir: str, app_version: str = "미확인") -> dict[str, Any]:
+    """정적 검증 결과를 바탕으로 iPhone 실기기 확인용 한국어 체크리스트를 만든다. 디자인 판단은 하지 않는다."""
+    return build_qa_checklist(theme_dir, app_version)
+
+
+@mcp.tool()
+def fingerprint_ktheme_archive(ktheme_path: str) -> dict[str, Any]:
+    """.ktheme 파일의 SHA-256, 크기, 항목 목록, 검증 결과를 돌려준다. 배포본 기록용."""
+    return archive_fingerprint(ktheme_path)
+
+
+@mcp.tool()
+def verify_ktheme_reproducible_build(theme_dir: str) -> dict[str, Any]:
+    """같은 테마 폴더를 두 번 패키징해 해시가 같은지 확인한다. 원본 폴더는 건드리지 않는다."""
+    return verify_reproducible_build(theme_dir)
 
 
 @mcp.resource("ktheme://guide/{topic}")

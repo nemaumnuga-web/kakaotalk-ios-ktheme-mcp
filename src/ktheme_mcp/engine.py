@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import os
 import re
 import struct
@@ -196,9 +197,6 @@ def inspect_contents(css: str, images: dict[str, tuple[int, int]], *, require_ic
             if key.endswith("-color") or key in ("background-color", "border-color"):
                 if val and val.startswith("#") and not re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?(?:[0-9a-fA-F]{2})?", val):
                     issues.append(issue("warning", "COLOR_HEX", "HEX 색상 문법이 이상합니다.", f"{selector}::{key}"))
-            if key.startswith("-ios-") and key not in KEYS and not any(k in key for k in ("color", "alpha", "image", "inset", "offset")):
-                # 모든 사용자 정의 키를 오류로 다루지 않는다.
-                pass
     return report(issues, selectors=sorted(blocks), manifest=blocks.get("ManifestStyle", {}), references=refs,
                   images={name: {"width": v[0], "height": v[1]} for name, v in sorted(images.items())},
                   caveat="정적 구조 검사입니다. 실제 카카오톡 설치·화면 적용 성공을 증명하지 않습니다.")
@@ -372,3 +370,128 @@ def troubleshoot(keyword: str) -> dict:
         candidates = difflib.get_close_matches(keyword, FAILURES, n=3, cutoff=0.1)
     return {"query": keyword, "matched": {k: FAILURES[k] for k in candidates},
             "rule": "미확인 기능을 확정적으로 말하지 말고, 문제 발생 경로와 실제 iOS 앱 버전을 기록하세요."}
+
+
+def _load_project(folder: str) -> tuple[Path, dict[str, dict[str, str]], dict[str, tuple[int, int]]]:
+    """테마 폴더를 읽어 (루트, 선택자 블록, 이미지 크기)를 돌려준다. 파일은 변경하지 않는다."""
+    root = safe_path(folder)
+    css_path = root / CSS_NAME
+    if not css_path.is_file():
+        raise FileNotFoundError(f"{CSS_NAME} 파일이 없습니다: {root}")
+    blocks, _ = parse_css(css_path.read_text(encoding="utf-8-sig", errors="replace"))
+    img_dir = root / "Images"
+    images, _ = _read_images_from_dir(img_dir) if img_dir.is_dir() else ({}, [])
+    return root, blocks, images
+
+
+def read_css_block(folder: str, selector: str) -> dict:
+    """테마 CSS에서 선택자 하나의 선언과 참조 이미지를 보여준다."""
+    _, blocks, _ = _load_project(folder)
+    name = selector.strip()
+    if name not in blocks:
+        return {"found": False, "selector": name, "similar": difflib.get_close_matches(name, list(blocks), n=5),
+                "available_selectors": len(blocks)}
+    props = blocks[name]
+    return {"found": True, "selector": name, "declarations": props,
+            "image_references": image_references({name: props})}
+
+
+def list_known_keys(text: str = "") -> dict:
+    """수록된 검증 키 인덱스를 검색한다. 빈 문자열이면 전체 목록."""
+    needle = text.strip().casefold()
+    rows = []
+    for key, (selector, usage, source_id, confidence) in sorted(KEYS.items()):
+        if needle and needle not in f"{key} {selector} {usage}".casefold():
+            continue
+        rows.append({"key": key, "selector": selector, "usage": usage,
+                     "evidence_level": confidence, "source": SOURCES[source_id]["kind"]})
+    return {"count": len(rows), "keys": rows,
+            "caveat": "이 인덱스는 전체 CSS 명세가 아닙니다. 목록에 없는 키는 유효하지 않다는 뜻이 아닙니다."}
+
+
+def compare_projects(folder_a: str, folder_b: str) -> dict:
+    """두 테마 폴더의 선택자·선언·이미지 차이를 비교한다(a → b)."""
+    _, ba, ia = _load_project(folder_a)
+    _, bb, ib = _load_project(folder_b)
+    changed = []
+    for selector in sorted(set(ba) & set(bb)):
+        pa, pb = ba[selector], bb[selector]
+        for key in sorted(set(pa) | set(pb)):
+            if pa.get(key) != pb.get(key):
+                changed.append({"selector": selector, "key": key, "a": pa.get(key), "b": pb.get(key)})
+    size_changed = [{"image": n, "a": ia[n], "b": ib[n]} for n in sorted(set(ia) & set(ib)) if ia[n] != ib[n]]
+    result = {
+        "selectors_added": sorted(set(bb) - set(ba)),
+        "selectors_removed": sorted(set(ba) - set(bb)),
+        "declarations_changed": changed,
+        "images_added": sorted(set(ib) - set(ia)),
+        "images_removed": sorted(set(ia) - set(ib)),
+        "image_size_changed": size_changed,
+    }
+    result["identical"] = not any(v for v in result.values())
+    return result
+
+
+def build_qa_checklist(folder: str, app_version: str = "미확인") -> dict:
+    """정적 검증 결과를 바탕으로 실기기 확인 체크리스트를 만든다. 디자인 판단은 포함하지 않는다."""
+    validation = validate_project(folder)
+    selectors = validation.get("selectors", [])
+    refs = validation.get("references", [])
+    items: list[dict] = []
+
+    def add(section: str, step: str) -> None:
+        items.append({"no": len(items) + 1, "section": section, "step": step, "result": "미확인"})
+
+    add("준비", f"카카오톡 iOS 앱 버전 기록: {app_version}")
+    add("준비", "적용 전 기존 테마 상태 스크린샷 및 현재 테마 설정 기록")
+    add("준비", "패키징된 .ktheme의 SHA-256 해시 기록 (fingerprint_ktheme_archive)")
+    add("적용", "iPhone 카카오톡에서 .ktheme 파일을 열어 적용 시도, 성공/실패 메시지 기록")
+    add("적용", "앱 완전 종료 후 재실행하여 적용 상태 유지 여부 확인")
+    for ref in refs:
+        add("이미지", f"{ref['selector']} 화면에서 {ref['image']} 표시 여부 확인 (키: {ref['key']})")
+    if any("MessageCell" in s for s in selectors):
+        add("말풍선", "받은 메시지·보낸 메시지 각각 짧은 문장 / 긴 문장 / 줄바꿈 문장으로 확인")
+        add("말풍선", "연속 메시지(같은 발신자 묶음)에서 말풍선 모서리와 여백 확인")
+        add("말풍선", "이미지 첨부·답장·링크 미리보기 등 말풍선 변형 화면에서 찌그러짐 확인")
+    if any("ChatRoom" in s or "Background" in s for s in selectors):
+        add("채팅방", "채팅방 배경 이미지가 입력창·스크롤 시 어긋나지 않는지 확인")
+    if any("TabBar" in s for s in selectors):
+        add("탭", "하단 탭 기본/선택 상태 아이콘 전환 확인")
+    add("안정성", "시스템 라이트/다크 모드 전환 후 화면 확인")
+    add("안정성", "기기 가로 회전·화면 크기(작은/큰 기기)에서 레이아웃 확인 가능 여부 기록")
+    add("업데이트", "다음 버전 패키징 후 같은 기기에서 업데이트 적용 및 기존 설정 변화 기록")
+    lines = [f"# 실기기 QA 체크리스트 (앱 버전: {app_version})", ""]
+    current = None
+    for item in items:
+        if item["section"] != current:
+            current = item["section"]
+            lines += ["", f"## {current}"]
+        lines.append(f"- [ ] {item['no']}. {item['step']}")
+    return {"ok_to_test": validation["ok"], "errors": validation["errors"], "items": items,
+            "markdown": "\n".join(lines),
+            "note": "정적 검증 오류가 있으면 먼저 수정한 뒤 실기기 테스트하세요. 체크리스트의 결과는 실기기에서만 기록할 수 있습니다."}
+
+
+def archive_fingerprint(archive: str) -> dict:
+    """.ktheme 파일의 SHA-256, 크기, 항목 목록과 정적 검증 결과를 돌려준다."""
+    path = safe_path(archive)
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    with zipfile.ZipFile(path) as zf:
+        entries = [x.filename for x in zf.infolist()]
+    return {"path": str(path), "size_bytes": path.stat().st_size, "sha256": digest.hexdigest(),
+            "entries": entries, "validation_ok": validate_archive(str(path))["ok"]}
+
+
+def verify_reproducible_build(folder: str) -> dict:
+    """같은 테마 폴더를 두 번 패키징해 바이트 단위로 같은지 확인한다. 임시 폴더만 사용한다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        first = package_project(folder, os.path.join(tmp, "first", "theme.ktheme"))
+        second = package_project(folder, os.path.join(tmp, "second", "theme.ktheme"))
+        if not (first.get("built") and second.get("built")):
+            return {"reproducible": False, "built": False, "validation": first.get("validation", first)}
+        h1 = hashlib.sha256(Path(first["path"]).read_bytes()).hexdigest()
+        h2 = hashlib.sha256(Path(second["path"]).read_bytes()).hexdigest()
+    return {"reproducible": h1 == h2, "built": True, "sha256": h1, "second_sha256": h2}

@@ -23,8 +23,16 @@
 | `diagnose_ktheme_issue` | 설치/말풍선/아이콘/색상 충돌 기술 디버깅 |
 | `get_ktheme_references` | 공식/커뮤니티/실측 근거 분리 |
 | `get_ktheme_workspace_policy` | 허용 파일 경로 진단 |
+| `read_ktheme_css_block` | 테마 CSS의 특정 선택자 선언·이미지 참조 읽기 (오타 시 유사 선택자 제안) |
+| `list_ktheme_known_keys` | 검증된 CSS 키 인덱스 검색 (근거 수준 포함) |
+| `compare_ktheme_projects` | 두 테마 폴더 비교: 추가/삭제 선택자, 바뀐 선언, 이미지 크기 변화 |
+| `build_ktheme_qa_checklist` | 정적 검증 결과 기반 iPhone 실기기 QA 체크리스트 (한국어 Markdown) |
+| `fingerprint_ktheme_archive` | `.ktheme`의 SHA-256·항목 목록·검증 결과 기록 (배포본 추적) |
+| `verify_ktheme_reproducible_build` | 같은 폴더를 두 번 패키징해 바이트 단위 동일성 확인 |
 
 추가: `ktheme://guide/{topic}` 리소스, `ktheme://sources/all` 리소스, 기술전용/디버깅용 MCP 프롬프트 2개.
+
+총 17개 도구. 모든 도구는 로컬 파일만 읽거나 임시 폴더에 쓰며, 원본 테마 폴더는 변경하지 않습니다.
 
 ## 설치
 
@@ -88,6 +96,8 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 python -m compileall -q src tests
 ```
 
+`tests/test_server.py`는 MCP 프로토콜 수준에서 도구 등록·호출·리소스·프롬프트를 확인합니다(SDK 설치 필요, 미설치 시 건너뜀).
+
 정적 검사만으로 KakaoTalk 로더의 수용 여부는 증명되지 않습니다. 앱 업데이트 이후에는 재적용 테스트를 수행하세요.
 
 ## 문서 기준
@@ -99,19 +109,6 @@ python -m compileall -q src tests
 
 > 카카오톡 및 KakaoTalk 상표는 각각의 권리자에게 귀속됩니다. 본 저장소는 카카오와 제휴하지 않습니다. 타인의 캐릭터·원본 이미지·샘플 에셋은 임의 재배포하지 않습니다.
 
-## GitHub에 별도 저장소로 올리기
+## 저장소 정보
 
-연결된 GitHub 앱에서 새 저장소 생성 권한이 없거나 `Resource not accessible by integration (403)`가 나면 GitHub 웹에서 새 빈 저장소를 먼저 만들거나, 연결 앱에 해당 저장소의 **Contents: Read and write** 접근 권한을 허용해야 합니다. 권한이 없을 때 읽기 가능한 저장소를 덮어쓰지 마세요.
-
-```bash
-# GitHub 웹에서 `kakaotalk-ios-ktheme-mcp` 빈 저장소를 먼저 만든 후
-cd kakaotalk-ios-ktheme-mcp
-git init
-git add .
-git commit -m "feat: Korean-only iOS ktheme engineering MCP"
-git branch -M main
-git remote add origin https://github.com/YOUR_USER/kakaotalk-ios-ktheme-mcp.git
-git push -u origin main
-```
-
-GitHub CLI가 로그인되어 있다면 `gh repo create kakaotalk-ios-ktheme-mcp --public --source . --remote origin --push`로 새 저장소를 만들 수도 있습니다. 사용자 대신 토큰이나 암호를 코드에 포함하지 마세요.
+이 저장소는 GitHub에 이미 올라가 있습니다. 새 저장소를 만들 때는 GitHub 웹이나 `gh repo create`를 직접 사용하세요. 토큰이나 암호를 코드에 포함하지 마세요.

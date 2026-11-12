@@ -7,9 +7,12 @@ import zlib
 import zipfile
 from pathlib import Path
 
+from ktheme_mcp.catalog import KEYS
 from ktheme_mcp.engine import (
-    image_references, inspect_contents, lookup_key, package_project,
-    parse_css, png_info, scaffold, safe_path, validate_archive, validate_project,
+    archive_fingerprint, build_qa_checklist, compare_projects, image_references,
+    inspect_contents, list_known_keys, lookup_key, package_project, parse_css, png_info,
+    read_css_block, safe_path, scaffold, validate_archive, validate_project,
+    verify_reproducible_build,
 )
 
 
@@ -154,6 +157,69 @@ class EngineTests(unittest.TestCase):
     def test_strict_warning_blocks_build(self):
         (self.theme / "Images" / "commonIcoTheme.png").unlink()
         r = package_project(str(self.theme), str(self.root / "blocked.ktheme"), fail_on_warnings=True)
+        self.assertFalse(r["built"])
+
+    def test_read_css_block_found_and_suggestion(self):
+        found = read_css_block(str(self.theme), "ManifestStyle")
+        self.assertTrue(found["found"])
+        self.assertIn("-kakaotalk-theme-id", found["declarations"])
+        missing = read_css_block(str(self.theme), "ManifestStyl")
+        self.assertFalse(missing["found"])
+        self.assertIn("ManifestStyle", missing["similar"])
+
+    def test_list_known_keys_filter(self):
+        all_keys = list_known_keys()
+        self.assertEqual(all_keys["count"], len(KEYS))
+        only = list_known_keys("manifeststyle")
+        self.assertTrue(only["keys"])
+        self.assertTrue(all(k["selector"] == "ManifestStyle" for k in only["keys"]))
+        self.assertEqual(list_known_keys("zzz-no-such-text")["count"], 0)
+
+    def test_compare_projects_detects_changes(self):
+        other = self.root / "other"
+        (other / "Images").mkdir(parents=True)
+        (other / "KakaoTalkTheme.css").write_text(
+            CSS.replace("'테스트'", "'변경됨'") + "NewStyle-X { -ios-background-image: 'new.png'; }", encoding="utf-8")
+        (other / "Images" / "chatroomBgImage@2x.png").write_bytes(make_png(8, 4))
+        (other / "Images" / "chatroomBgImage@3x.png").write_bytes(make_png(6, 3))
+        r = compare_projects(str(self.theme), str(other))
+        self.assertFalse(r["identical"])
+        self.assertIn("NewStyle-X", r["selectors_added"])
+        self.assertIn("-kakaotalk-theme-name", [c["key"] for c in r["declarations_changed"]])
+        self.assertEqual(r["image_size_changed"][0]["image"], "chatroomBgImage@2x.png")
+        self.assertTrue(compare_projects(str(self.theme), str(self.theme))["identical"])
+
+    def test_qa_checklist_is_technical_only(self):
+        r = build_qa_checklist(str(self.theme), app_version="테스트버전")
+        self.assertTrue(r["ok_to_test"])
+        self.assertIn("테스트버전", r["markdown"])
+        self.assertIn("chatroomBgImage.png", r["markdown"])
+        self.assertTrue(all(i["result"] == "미확인" for i in r["items"]))
+        self.assertNotIn("색상 추천", r["markdown"])
+
+    def test_qa_checklist_blocks_on_errors(self):
+        (self.theme / "Images" / "chatroomBgImage@2x.png").unlink()
+        (self.theme / "Images" / "chatroomBgImage@3x.png").unlink()
+        r = build_qa_checklist(str(self.theme))
+        self.assertFalse(r["ok_to_test"])
+
+    def test_archive_fingerprint(self):
+        out = self.root / "fp.ktheme"
+        package_project(str(self.theme), str(out))
+        fp = archive_fingerprint(str(out))
+        self.assertEqual(len(fp["sha256"]), 64)
+        self.assertTrue(fp["validation_ok"])
+        self.assertIn("KakaoTalkTheme.css", fp["entries"])
+        self.assertEqual(fp["size_bytes"], out.stat().st_size)
+
+    def test_verify_reproducible_build(self):
+        r = verify_reproducible_build(str(self.theme))
+        self.assertTrue(r["built"])
+        self.assertTrue(r["reproducible"])
+
+    def test_verify_reproducible_build_reports_invalid_input(self):
+        (self.theme / "Images" / "commonIcoTheme.png").write_bytes(b"broken")
+        r = verify_reproducible_build(str(self.theme))
         self.assertFalse(r["built"])
 
 
